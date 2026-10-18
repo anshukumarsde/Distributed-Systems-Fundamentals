@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Distributed Counter Lab</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #172033; background: #f4f6fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 40px 20px; }
+    main { max-width: 820px; margin: auto; }
+    h1 { margin-bottom: 4px; font-size: 2rem; }
+    .muted { color: #586477; }
+    .card { margin-top: 20px; padding: 24px; border: 1px solid #dce2ec; border-radius: 12px; background: white; }
+    .counter { margin: 8px 0; font-size: 4rem; font-weight: 750; line-height: 1.1; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 24px; color: #586477; }
+    button { margin: 16px 8px 0 0; padding: 10px 15px; border: 0; border-radius: 7px; color: white; background: #2459c4; font: inherit; cursor: pointer; }
+    button.secondary { color: #172033; background: #e8edf5; }
+    button.danger { background: #a73333; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .concepts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .concept { padding: 14px; border-radius: 8px; background: #f4f6fa; }
+    .concept strong { display: block; margin-bottom: 3px; }
+    #message { min-height: 1.5em; margin-top: 12px; }
+    code { padding: 2px 5px; border-radius: 4px; background: #eef1f6; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Distributed Counter Lab</h1>
+    <div class="muted">A tiny multi-server system you can inspect and experiment with.</div>
+
+    <section class="card" aria-live="polite">
+      <div class="muted">Shared counter</div>
+      <div id="value" class="counter">—</div>
+      <div class="meta">
+        <span>Version: <strong id="version">—</strong></span>
+        <span>This request served by: <strong id="server">—</strong></span>
+      </div>
+      <button id="increment">Safe increment</button>
+      <button id="race" class="danger">Run race demo (unsafe)</button>
+      <button id="reset" class="secondary">Reset counter</button>
+      <div id="message" role="status" class="muted"></div>
+    </section>
+
+    <section class="card">
+      <h2>What this demonstrates</h2>
+      <div class="concepts">
+        <div class="concept"><strong>System of record</strong>The shared state file is authoritative; servers do not keep their own counter copies.</div>
+        <div class="concept"><strong>Consistency</strong>Every read fetches the committed shared value and its version.</div>
+        <div class="concept"><strong>Shared state</strong>Both server processes use the same state file.</div>
+        <div class="concept"><strong>Race conditions</strong>Safe increments are atomic. The unsafe demo makes concurrent requests overwrite stale reads.</div>
+        <div class="concept"><strong>Multi-server behavior</strong>Open this page on both ports; changes appear on each as they poll the database.</div>
+      </div>
+      <p class="muted">The unsafe route is intentionally broken for learning. Never use that read-then-write pattern for real updates.</p>
+    </section>
+  </main>
+  <script>
+    const value = document.querySelector("#value");
+    const version = document.querySelector("#version");
+    const server = document.querySelector("#server");
+    const message = document.querySelector("#message");
+    const buttons = [...document.querySelectorAll("button")];
+
+    async function request(path, method = "GET") {
+      const response = await fetch(path, { method });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Request failed");
+      return result;
+    }
+
+    function render(state) {
+      value.textContent = state.value;
+      version.textContent = state.version;
+      server.textContent = state.server_id;
+    }
+
+    async function refresh() {
+      try { render(await request("/api/state")); }
+      catch (error) { message.textContent = error.message; }
+    }
+
+    async function run(button, action) {
+      buttons.forEach(item => item.disabled = true);
+      message.textContent = "Working…";
+      try { await action(); await refresh(); }
+      catch (error) { message.textContent = error.message; }
+      finally { buttons.forEach(item => item.disabled = false); }
+    }
+
+    document.querySelector("#increment").addEventListener("click", () => run(null, async () => {
+      const result = await request("/api/increment", "POST");
+      message.textContent = `Increment committed by ${result.server_id}.`;
+    }));
+
+    document.querySelector("#race").addEventListener("click", () => run(null, async () => {
+      const result = await request("/api/race-demo", "POST");
+      message.textContent = `Unsafe: ${result.requested} simultaneous increments, actual increase ${result.actual_increase}, lost updates ${result.lost_updates}.`;
+    }));
+
+    document.querySelector("#reset").addEventListener("click", () => run(null, async () => {
+      const result = await request("/api/reset", "POST");
+      message.textContent = `Counter reset by ${result.server_id}.`;
+    }));
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
